@@ -8,7 +8,7 @@ TD_LIB=./libtapdance/libtapdance.a
 LIBS=${RUST_LIB} ${TD_LIB} -L/usr/local/lib -lpcap -lpfring -lzmq -lcrypto -lpthread -lrt -lgmp -ldl -lm
 CFLAGS = -Wall -DENABLE_BPF -DHAVE_PF_RING -DHAVE_PF_RING_ZC -DTAPDANCE_USE_PF_RING_ZERO_COPY -O2 # -g
 PROTO_RS_PATH=src/signalling.rs
-EXE_DIR=./bin
+
 
 all: rust libtd conjure app registration-server ${PROTO_RS_PATH}
 
@@ -21,24 +21,20 @@ test:
 	cargo test --${DEBUG_OR_RELEASE}
 
 app:
-	[ -d $(EXE_DIR) ] || mkdir -p $(EXE_DIR)
-	go build -o ${EXE_DIR}/application ./cmd/application
+	cd ./application/ && make
 
 libtd:
 	cd ./libtapdance/ && make libtapdance.a
 
 conjure: detect.c loadkey.c rust_util.c rust libtapdance
-	[ -d $(EXE_DIR) ] || mkdir -p $(EXE_DIR)
-	${CC} ${CFLAGS} -o ${EXE_DIR}/$@ detect.c loadkey.c rust_util.c ${LIBS}
-
+	${CC} ${CFLAGS} -o $@ detect.c loadkey.c rust_util.c ${LIBS}
+# gcc -Wall -DENABLE_BPF -DHAVE_PF_RING -DHAVE_PF_RING_ZC -DTAPDANCE_USE_PF_RING_ZERO_COPY -O2 -o conjure detect.c loadkey.c rust_util.c ./target/release/librust_dark_decoy.a ./libtapdance/libtapdance.a -lpfring -lpcap -L/usr/local/lib -lzmq -lcrypto -lpthread -lrt -lgmp -ldl -lm
 
 conjure-sim: detect.c loadkey.c rust_util.c rust libtapdance
-	[ -d $(EXE_DIR) ] || mkdir -p $(EXE_DIR)
-	${CC} -Wall -O2 -o ${EXE_DIR}/conjure detect.c loadkey.c rust_util.c ${LIBS}
+	${CC} -Wall -O2 -o conjure detect.c loadkey.c rust_util.c ${LIBS}
 
 registration-server:
-	[ -d $(EXE_DIR) ] || mkdir -p $(EXE_DIR)
-	go build -o ${EXE_DIR}/registration-server ./cmd/registration-server
+	cd ./cmd/registration-server/ && make
 
 PARAMS := det app reg zbalance sim
 target := unk
@@ -85,7 +81,7 @@ endif
 
 clean:
 	cargo clean
-	rm -f ${TARGETS} *.o *~ ${EXE_DIR}
+	rm -f ${TARGETS} *.o *~
 
 ${PROTO_RS_PATH}:
 	cd ./proto/ && make

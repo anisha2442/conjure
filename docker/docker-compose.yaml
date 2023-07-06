@@ -20,11 +20,8 @@ services:
       - /var/lib/conjure:/var/lib/conjure # config
     logging:
       driver: "journald"
-      options:
-        tag: "{{.Name}}"
-    container_name: zbalance
     restart: "always"
-    command: [ "/opt/conjure/scripts/start_zbalance_ipc.sh" ]
+    command: [ "/opt/conjure/bin/start_zbalance_ipc.sh" ]
 
   # # DEBUG PF_RING / zbalance
   #  zcount:
@@ -42,12 +39,11 @@ services:
       - /dev/net/tun:/dev/net/tun #tun driver interface
       - /dev/hugepages:/dev/hugepages # zbalance_ipc
       - /var/lib/conjure:/var/lib/conjure # config
-    container_name: conjure-det
     command:
       [
         "bash",
         "-c",
-        "sleep 10 && /opt/conjure/scripts/start_detector.sh"
+        "sleep 10 && /opt/conjure/bin/start_detector.sh"
       ]
 
   conjure-app:
@@ -59,10 +55,9 @@ services:
       - /dev/hugepages:/dev/hugepages # zbalance_ipc
       - /var/lib/conjure:/var/lib/conjure # config
       - /usr/share/GeoIP:/usr/share/GeoIP # geoip database
-    container_name: conjure-app
     command:
       [
         "bash",
         "-c",
-        "sleep 10 && /opt/conjure/scripts/start_application.sh"
+        "sleep 10 && /opt/conjure/bin/start_application.sh"
       ]

@@ -36,7 +36,7 @@ use std::fs::{self, File};
 use std::io::stdin;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{self, Duration};
@@ -278,10 +278,7 @@ fn read_interfaces<W>(
 ) where
     W: Write + std::marker::Send + 'static,
 {
-    let n_interfaces = interfaces.matches(',').count();
-    let pool = ThreadPool::new(n_interfaces + 2);
-
-    let interfaces_complete = Arc::new(AtomicU32::new(0_u32));
+    let pool = ThreadPool::new(interfaces.matches(',').count() + 2);
 
     for sig in TERM_SIGNALS {
         register(*sig, Arc::clone(&term)).unwrap();
@@ -297,7 +294,6 @@ fn read_interfaces<W>(
                 let h = Arc::clone(&handler);
                 let w = Arc::clone(&arc_writer);
                 let t = Arc::clone(&term);
-                let ic = Arc::clone(&interfaces_complete);
                 pool.execute(move || {
                     let cap = Capture::from_device(dev)
                         .unwrap()
@@ -305,8 +301,6 @@ fn read_interfaces<W>(
                         .open()
                         .unwrap();
                     read_packets(n as u32, cap, h, w, t);
-                    ic.fetch_add(1, Ordering::Relaxed);
-
                 });
             }
             None => println!("Couldn't find interface '{iface}'"),
@@ -320,7 +314,6 @@ fn read_interfaces<W>(
         pool.execute(move || {
             let beginning_park = time::Instant::now();
             let mut timeout_remaining = duration_limit;
-            let ic = Arc::clone(&interfaces_complete);
             loop {
                 thread::park_timeout(timeout_remaining);
                 let elapsed = beginning_park.elapsed();
@@ -330,9 +323,6 @@ fn read_interfaces<W>(
                 }
                 if elapsed >= duration_limit {
                     term_timeout.store(true, Ordering::Relaxed);
-                    break;
-                }
-                if ic.load(Ordering::Relaxed) >= n_interfaces as u32 {
                     break;
                 }
 
@@ -354,11 +344,8 @@ fn read_pcap_dir<W>(
     W: Write + std::marker::Send + 'static,
 {
     let mut paths = fs::read_dir(pcap_dir.clone()).unwrap();
-    let total_files = paths.count();
-    let pool = ThreadPool::new(total_files + 2);
+    let pool = ThreadPool::new(paths.count() + 2);
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term)).unwrap();
-
-    let files_complete = Arc::new(AtomicU32::new(0_u32));
 
     // refresh the path list and launch jobs
     paths = fs::read_dir(pcap_dir).unwrap();
@@ -369,11 +356,9 @@ fn read_pcap_dir<W>(
                 let h = Arc::clone(&handler);
                 let w = Arc::clone(&arc_writer);
                 let t = Arc::clone(&term);
-                let fc = Arc::clone(&files_complete);
                 pool.execute(move || {
                     let cap = Capture::from_file(p.path()).unwrap();
                     read_packets(n as u32, cap, h, w, t);
-                    fc.fetch_add(1, Ordering::Relaxed);
                 });
             }
             Err(e) => println!("path error: {e}"),
@@ -384,7 +369,6 @@ fn read_pcap_dir<W>(
     if let Some(duration_limit) = timeout {
         debug!("duration: {duration_limit:?}");
         let term_timeout = Arc::clone(&term);
-        let fc = Arc::clone(&files_complete);
         pool.execute(move || {
             let beginning_park = time::Instant::now();
             let mut timeout_remaining = duration_limit;
@@ -399,9 +383,6 @@ fn read_pcap_dir<W>(
                     term_timeout.store(true, Ordering::Relaxed);
                     break;
                 }
-                if fc.load(Ordering::Relaxed) >= total_files as u32 {
-                    break;
-                }
 
                 timeout_remaining = duration_limit - elapsed;
             }
@@ -414,7 +395,7 @@ fn read_pcap_dir<W>(
 // abstracts over live captures (Capture<Active>) and file captures
 // (Capture<Offline>) using generics and the Activated trait,
 fn read_packets<T, W>(
-    id: u32,
+    _id: u32,
     mut capture: Capture<T>,
     handler: Arc<Mutex<PacketHandler>>,
     writer: Arc<Mutex<PcapNgWriter<W>>>,
@@ -447,16 +428,7 @@ fn read_packets<T, W>(
     while !terminate.load(Ordering::Relaxed) {
         let packet = match capture.next_packet() {
             Ok(p) => p,
-            Err(e) => {
-                match e {
-                    pcap::Error::NoMorePackets => {}
-                    pcap::Error::TimeoutExpired => {}
-                    _ => {
-                        println!("thread {id} err: {e}");
-                    }
-                }
-                break;
-            }
+            Err(_e) => continue,
         };
 
         if packet.is_empty() {
@@ -514,10 +486,10 @@ fn read_packets<T, W>(
 
         match { writer.lock().unwrap().write_pcapng_block(out) } {
             Ok(_) => continue,
-            Err(e) => println!("thread {id} failed to write packet: {e}"),
+            Err(e) => println!("thread {_id} failed to write packet: {e}"),
         }
     }
-    debug!("thread {id} shutting down")
+    debug!("thread {_id} shutting down")
 }
 
 fn parse_targets(input: String) -> Vec<IpNet> {

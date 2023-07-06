@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"os"
@@ -12,16 +11,15 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-
+	zmq "github.com/pebbe/zmq4"
+	"github.com/refraction-networking/conjure/application/lib"
+	"github.com/refraction-networking/conjure/application/transports/wrapping/min"
+	"github.com/refraction-networking/conjure/application/transports/wrapping/obfs4"
+	"github.com/refraction-networking/conjure/pkg/apiregserver"
+	"github.com/refraction-networking/conjure/pkg/dnsregserver"
 	"github.com/refraction-networking/conjure/pkg/metrics"
 	"github.com/refraction-networking/conjure/pkg/regprocessor"
-	"github.com/refraction-networking/conjure/pkg/regserver/apiregserver"
-	"github.com/refraction-networking/conjure/pkg/regserver/dnsregserver"
-	"github.com/refraction-networking/conjure/pkg/station/lib"
-	"github.com/refraction-networking/conjure/pkg/transports/wrapping/min"
-	"github.com/refraction-networking/conjure/pkg/transports/wrapping/obfs4"
-	"github.com/refraction-networking/conjure/pkg/transports/wrapping/prefix"
-	pb "github.com/refraction-networking/conjure/proto"
+	pb "github.com/refraction-networking/gotapdance/protobuf"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -49,9 +47,8 @@ type config struct {
 }
 
 var defaultTransports = map[pb.TransportType]lib.Transport{
-	pb.TransportType_Min:    min.Transport{},
-	pb.TransportType_Obfs4:  obfs4.Transport{},
-	pb.TransportType_Prefix: prefix.DefaultSet(),
+	pb.TransportType_Min:   min.Transport{},
+	pb.TransportType_Obfs4: obfs4.Transport{},
 	// [transports:enable]
 }
 
@@ -107,13 +104,20 @@ func run(regServers []regServer) {
 
 func readKey(path string) ([]byte, error) {
 	privkey, err := os.ReadFile(path)
+	privkey = privkey[:32]
 	if err != nil {
 		return nil, err
-	} else if len(privkey) < ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("Private Key too short")
 	}
+	return privkey, nil
+}
 
-	return privkey[:ed25519.PrivateKeySize], nil
+func readKeyAndEncode(path string) (string, error) {
+	keyBytes, err := readKey(path)
+	if err != nil {
+		return "", err
+	}
+	privkey := zmq.Z85encode(string(keyBytes))
+	return privkey, nil
 }
 
 // loadConfig is intended to re-parse portions of the config in conjunction with
@@ -179,7 +183,7 @@ func main() {
 	}
 	log.SetLevel(logLevel)
 
-	zmqPrivkey, err := readKey(conf.ZMQPrivateKeyPath)
+	zmqPrivkey, err := readKeyAndEncode(conf.ZMQPrivateKeyPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -218,7 +222,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		dnsRegServer, err = dnsregserver.NewDNSRegServer(conf.Domain, conf.DNSListenAddr, dnsPrivKey[:32], processor, conf.latestClientConf.GetGeneration(), log.WithField("registrar", "DNS"), metrics)
+		dnsRegServer, err = dnsregserver.NewDNSRegServer(conf.Domain, conf.DNSListenAddr, dnsPrivKey, processor, conf.latestClientConf.GetGeneration(), log.WithField("registrar", "DNS"), metrics)
 		if err != nil {
 			log.Fatal(err)
 		}

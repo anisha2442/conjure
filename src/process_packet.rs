@@ -3,7 +3,6 @@ use std::os::raw::c_void;
 use std::panic;
 use std::slice;
 use std::str;
-use std::u8;
 
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -14,6 +13,7 @@ use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
 // use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use std::u8;
 //use elligator;
 use flow_tracker::{Flow, FlowNoSrcPort};
 // use dd_selector::DDIpSelector;
@@ -300,6 +300,9 @@ impl PerCoreGlobal {
                 zmq_msg.set_decoy_address(decoy);
                 zmq_msg.set_registration_address(src);
 
+                let repr_str = hex::encode(res.0);
+                debug!("New registration {}, {}", flow, repr_str);
+
                 let zmq_payload = match zmq_msg.write_to_bytes() {
                     Ok(b) => b,
                     Err(e) => {
@@ -374,16 +377,16 @@ impl PerCoreGlobal {
 mod tests {
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
     use toml;
     use StationConfig;
 
     #[test]
     fn test_filter_station_traffic() {
-        let mut conf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        conf_path.push("cmd/application/app_config.toml");
+        env::set_var("CJ_STATION_CONFIG", "./application/config.toml");
 
-        print!("{}", conf_path.to_str().unwrap());
+        // --
+        let conf_path = env::var("CJ_STATION_CONFIG").unwrap();
+
         let contents =
             fs::read_to_string(conf_path).expect("Something went wrong reading the file");
 
