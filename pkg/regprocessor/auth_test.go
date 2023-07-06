@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/refraction-networking/conjure/application/transports/wrapping/min"
-	pb "github.com/refraction-networking/gotapdance/protobuf"
+	"github.com/refraction-networking/conjure/pkg/transports/wrapping/min"
+	pb "github.com/refraction-networking/conjure/proto"
 )
 
 // TODO: Add monitor to RegProcessor and metrics / logging for connections
@@ -134,7 +134,7 @@ func TestZMQAuth(t *testing.T) {
 	// messages that we expect the station to hear. in production this will be new registrations,
 	// here we don't care about the message contents.
 	go func() {
-		regProcessor, err := newRegProcessor(zmqBindAddr, zmqPort, serverPrivkeyZ85, true, stationPublicKeys)
+		regProcessor, err := newRegProcessor(zmqBindAddr, zmqPort, []byte(zmq.Z85decode(serverPrivkeyZ85)), true, stationPublicKeys)
 		require.Nil(t, err)
 		defer regProcessor.Close()
 		errStation := regProcessor.AddTransport(pb.TransportType_Min, min.Transport{})

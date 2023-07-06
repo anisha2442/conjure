@@ -1,0 +1,148 @@
+
+## ------ Application General ------
+
+# Absolute path to private key to use when authenticating with servers.
+# Can be either privkey or privkey || pubkey; only first 32 bytes will
+# be used. If this is blank then the environment variable CJ_PRIVKEY
+# which is defined in conjure.conf will be used (if that fails to parse
+# the station will shutdown).
+privkey_path = ""
+
+# Log level, one of the following: info, error, warn, debug, trace
+log_level = "error"
+
+# Path to a file containing supplemental prefix specifications for the prefix transport.
+supplemental_prefix_path = ""
+
+# Do not include Default prefixes and rely entirely on the prefixes in supplemental_prefix_path
+disable_default_prefixes = false
+
+## ------ Liveness Probing ------
+
+# Duration that a phantom IP identified as "LIVE" using a liveness test is
+# cached, preventing further lookups to the address. Empty string disables
+# caching for live phantom hosts.
+cache_expiration_time = "2.0h"
+# cache_capacity specifies the cache capacity to use for phantom IPs identified
+# as "LIVE". cache_expiration_time must be set otherwise no caching occurs for
+# live hosts.
+#
+# If unset or 0 no capacity is set and a map is used for the cache otherwise
+# cache will have finite capacity and implement LRU eviction.
+cache_capacity = 0
+# Duration that a phantom IP identified as "NOT LIVE" using a liveness test is
+# cached, preventing further lookups to the address. This should generally be
+# shorter to be responsive to remain responsive to hosts that become live. Empty
+# string disables caching for non-live phantom hosts.
+cache_expiration_nonlive = "5m"
+# cache_capacity_nonlive specifies the cache capacity to use for phantom IPs
+# identified as "NOT LIVE". cache_expiration_nonlive must be set otherwise no
+# caching occurs for non-live hosts.
+#
+# If unset or 0 no capacity is set and a map is used for the cache otherwise
+# cache will have finite capacity and implement LRU eviction.
+cache_capacity_nonlive = 0
+
+## ------ Registration / Connection Filters ------
+
+# Allow the station to opt out of either version of internet protocol to limit a
+# statio to handling one or the other. For example, v6 on small station deployment
+# with only v6 phantom subnet,  v4 only on station with no puvlic v6 address.
+enable_v4 = true
+enable_v6 = false
+
+# Number of workers launched to handle received registrations.
+ingest_worker_count = 100
+
+# If a registration is received with a covert address in one of these subnets it will
+# be ignored and dropped. This is to prevent clients leveraging the outgoing
+# connections from the station to connect to sation infrastructure that would
+# be othewise firewalled.
+covert_blocklist_domains = ["localhost"]
+covert_blocklist_subnets = [
+    "127.0.0.1/32",     # localhost ipv4
+    "10.0.0.0/8",       # reserved ipv4
+    "172.16.0.0/12",    # reserved ipv4
+    "192.168.0.0/16",   # reserved ipv4
+    "fc00::/7 ",        # private network ipv6
+    "fe80::0/16",       # link local ipv6
+    "::1/128",           # localhost ipv6
+]
+
+# Automatically add all addresses and subnets associated with local devices to
+# the blocklist.
+covert_blocklist_public_addrs = true
+
+# Override the blocklist providing a more restrictive allowlist. Any addresses
+# not explicitly included in an allowlisted subnet will be considered
+# blocklisted and the registration will be dropped.
+covert_allowlist_subnets = []
+
+# If a registration is received and the phantom address is in one of these
+# subnets the registration will be dropped. This allows us to exclude subnets to
+# prevent stations from interfering.
+phantom_blocklist = [ ]
+
+# List of addresses to filter out traffic from the detector. The primary functionality
+# of this is to prevent liveness testing from other stations in a conjure cluster from
+# clogging up the logs with connection notifications. To accomplish this goal add all station
+# ip addresses to this list when configuring station detectors.
+detector_filter_list = [
+    "127.0.0.1",
+    "::1",
+]
+
+## ------ GeoIP Info ------
+
+# MaxMind Database files - if empty then the Empty Geoip lookup will be used (effictvely disaling
+# lookup). The default path used by the maxmind geoiupdate tool is `/usr/local/share/GeoIP`.
+# repo - https://github.com/maxmind/geoipupdate/blob/main/pkg/geoipupdate/defaults_notwin.go#L15
+geoip_cc_db_path = ""
+geoip_asn_db_path = ""
+
+
+## ------ ZMQ ------
+
+# Bool to enable or disable sharing of registrations over API when received over decoy registrar
+enable_share_over_api = false
+
+# REST endpoint to share decoy registrations.
+preshare_endpoint = ""
+
+# Name of abstract socket to bind proxy to
+socket_name = "zmq-proxy"
+
+# Time in milliseconds to wait between sending heartbeats.
+# Heartbeats are only sent when other traffic doesn't come through;
+# i.e. normal messages can "act" as a heartbeat by confirming
+# that the connection is alive.
+heartbeat_interval = 30000
+
+# Time in milliseconds after sending a heartbeat to wait for
+# a response before the connection is assumed to be dead.
+heartbeat_timeout = 1000
+
+### ZMQ sockets to connect to and subscribe
+
+## Registration API
+[[connect_sockets]]
+
+# Address of the socket to connect to
+address = "tcp://registration.refraction.network:5591"
+
+# Type of authenticaton method to use when connecting. Can be NULL for no
+# authentication or CURVE for public key-based authentication.
+type = "CURVE"
+
+# Public key of socket to use if using CURVE authentication
+# The default value is the public key for the API hosted at registration.refraction.network
+pubkey = "s5gkB.U$dl]gO=F{Qo3=4Api-T$5#tpwaT/bSOr@"
+
+# ZMQ subscription prefix for this socket. Leave as "" or omit to receive all messages
+subscription = ""
+
+## Detector
+[[connect_sockets]]
+
+address = "ipc://@detector"
+type = "NULL"

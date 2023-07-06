@@ -1,18 +1,25 @@
 package regprocessor
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	zmq "github.com/pebbe/zmq4"
-	"github.com/refraction-networking/conjure/application/transports/wrapping/min"
+	"github.com/refraction-networking/conjure/pkg/core/interfaces"
 	"github.com/refraction-networking/conjure/pkg/metrics"
-	pb "github.com/refraction-networking/gotapdance/protobuf"
+	"github.com/refraction-networking/conjure/pkg/regserver/overrides"
+	"github.com/refraction-networking/conjure/pkg/transports"
+	"github.com/refraction-networking/conjure/pkg/transports/wrapping/min"
+	"github.com/refraction-networking/conjure/pkg/transports/wrapping/prefix"
+	pb "github.com/refraction-networking/conjure/proto"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 )
@@ -76,56 +83,49 @@ func TestC2SWrapperProcessing(t *testing.T) {
 	p := mockRegProcessor()
 
 	zmqPayload, err := p.processC2SWrapper(c2sPayload, []byte(net.ParseIP("127.0.0.1").To16()), pb.RegistrationSource_API)
-	if err != nil {
-		t.Fatalf("failed to generate ZMQ payload: expected nil, got %v", err)
-	}
+	require.Nil(t, err, "failed to generate ZMQ payload: expected nil, got %v", err)
 
 	var retrievedPayload pb.C2SWrapper
 	err = proto.Unmarshal(zmqPayload, &retrievedPayload)
-	if err != nil {
-		t.Fatalf("failed to unmarshal ClientToStation from ZMQ payload: expected nil, got %v", err)
-	}
-
-	if retrievedPayload.RegistrationPayload.GetDecoyListGeneration() != c2sPayload.RegistrationPayload.GetDecoyListGeneration() {
-		t.Fatalf("decoy list generation in retrieved ClientToStation doesn't match: expected %d, got %d", c2sPayload.RegistrationPayload.GetDecoyListGeneration(), retrievedPayload.RegistrationPayload.GetDecoyListGeneration())
-	}
-
-	if retrievedPayload.RegistrationPayload.GetCovertAddress() != c2sPayload.RegistrationPayload.GetCovertAddress() {
-		t.Fatalf("covert address in retrieved ClientToStation doesn't match: expected %s, got %s", c2sPayload.RegistrationPayload.GetCovertAddress(), retrievedPayload.RegistrationPayload.GetCovertAddress())
-	}
-
-	if retrievedPayload.RegistrationPayload.GetV4Support() != c2sPayload.RegistrationPayload.GetV4Support() {
-		t.Fatalf("v4 support in retrieved ClientToStation doesn't match: expected %v, got %v", c2sPayload.RegistrationPayload.GetV4Support(), retrievedPayload.RegistrationPayload.GetV4Support())
-	}
-
-	if retrievedPayload.RegistrationPayload.GetV6Support() != c2sPayload.RegistrationPayload.GetV6Support() {
-		t.Fatalf("v6 support in retrieved ClientToStation doesn't match: expected %v, got %v", c2sPayload.RegistrationPayload.GetV6Support(), retrievedPayload.RegistrationPayload.GetV6Support())
-	}
-
-	if net.IP(retrievedPayload.GetRegistrationAddress()).String() != "127.0.0.1" {
-		t.Fatalf("source address in retrieved C2Swrapper doesn't match: expected %v, got %v", "127.0.0.1", net.IP(retrievedPayload.GetRegistrationAddress()).String())
-	}
-
-	if retrievedPayload.GetRegistrationSource() != pb.RegistrationSource_API {
-		t.Fatalf("Registration source in retrieved C2Swrapper doesn't match: expected %v, got %v", pb.RegistrationSource_API, retrievedPayload.GetRegistrationSource())
-	}
+	require.Nil(t, err, "failed to unmarshal ClientToStation from ZMQ payload: expected nil, got %v", err)
+	require.Equal(t, c2sPayload.RegistrationPayload.GetDecoyListGeneration(), retrievedPayload.RegistrationPayload.GetDecoyListGeneration())
+	require.Equal(t, c2sPayload.RegistrationPayload.GetCovertAddress(), retrievedPayload.RegistrationPayload.GetCovertAddress())
+	require.Equal(t, c2sPayload.RegistrationPayload.GetV4Support(), retrievedPayload.RegistrationPayload.GetV4Support())
+	require.Equal(t, c2sPayload.RegistrationPayload.GetV6Support(), retrievedPayload.RegistrationPayload.GetV6Support())
+	require.Equal(t, "127.0.0.1", net.IP(retrievedPayload.GetRegistrationAddress()).String())
+	require.Equal(t, pb.RegistrationSource_API, retrievedPayload.GetRegistrationSource())
 
 	altSource := pb.RegistrationSource_DetectorPrescan
 	c2sPayload.RegistrationSource = &altSource
 	zmqPayload, err = p.processC2SWrapper(c2sPayload, []byte(net.ParseIP("127.0.0.1").To16()), pb.RegistrationSource_API)
-	if err != nil {
-		t.Fatalf("failed to generate ZMQ payload: expected nil, got %v", err)
-	}
+	require.Nil(t, err, "failed to generate ZMQ payload: expected nil, got %v", err)
 
 	var retrievedPayload1 pb.C2SWrapper
 	err = proto.Unmarshal(zmqPayload, &retrievedPayload1)
-	if err != nil {
-		t.Fatalf("failed to unmarshal ClientToStation from ZMQ payload: expected nil, got %v", err)
-	}
+	require.Nil(t, err, "failed to unmarshal ClientToStation from ZMQ payload: expected nil, got %v", err)
+	require.Equal(t, pb.RegistrationSource_DetectorPrescan, retrievedPayload1.GetRegistrationSource())
 
-	if retrievedPayload1.GetRegistrationSource() != pb.RegistrationSource_DetectorPrescan {
-		t.Fatalf("Registration source in retrieved C2Swrapper doesn't match: expected %v, got %v", pb.RegistrationSource_DetectorPrescan, retrievedPayload.GetRegistrationSource())
-	}
+	_, err = p.processC2SWrapper(c2sPayload, []byte(net.ParseIP("127.0.0.1").To16()), pb.RegistrationSource_API)
+	require.Nil(t, err, "failed to generate ZMQ payload: expected nil, got %v", err)
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	require.Nil(t, err)
+	port := uint32(22)
+	rr := &pb.RegistrationResponse{DstPort: &port}
+	c2sPayload.RegistrationResponse = rr
+	p.privkey = priv
+	p.authenticated = true
+	zmqPayload, err = p.processC2SWrapper(c2sPayload, []byte(net.ParseIP("127.0.0.1").To16()), pb.RegistrationSource_API)
+	require.Nil(t, err, "failed to generate ZMQ payload: expected nil, got %v", err)
+
+	var retrievedPayload2 pb.C2SWrapper
+	err = proto.Unmarshal(zmqPayload, &retrievedPayload2)
+	require.Nil(t, err, "failed to unmarshal ClientToStation from ZMQ payload: expected nil, got %v", err)
+
+	rrb, err := proto.Marshal(rr)
+	require.Nil(t, err)
+	require.Equal(t, rrb, retrievedPayload2.RegRespBytes)
+	require.True(t, ed25519.Verify(pub, retrievedPayload2.RegRespBytes, retrievedPayload2.RegRespSignature))
 }
 
 func BenchmarkRegistration(b *testing.B) {
@@ -299,12 +299,12 @@ func TestUpdateIP(t *testing.T) {
 	}
 }
 
-type fakeIpSelector struct {
+type fakeIPSelector struct {
 	v4Addr net.IP
 	v6Addr net.IP
 }
 
-func (f fakeIpSelector) Select(seed []byte, generation uint, clientLibVer uint, v6Support bool) (net.IP, error) {
+func (f fakeIPSelector) Select(seed []byte, generation uint, clientLibVer uint, v6Support bool) (net.IP, error) {
 	if v6Support {
 		return f.v6Addr, nil
 	}
@@ -345,7 +345,7 @@ func TestRegisterBidirectional(t *testing.T) {
 	fakeV4Phantom := "9.8.7.6"
 	fakeV6Phantom := "fbdc:8e7d:872c:ce49:5470:8223:db34:7d67"
 
-	fakeSelector := fakeIpSelector{
+	fakeSelector := fakeIPSelector{
 		v4Addr: net.ParseIP(fakeV4Phantom),
 		v6Addr: net.ParseIP(fakeV6Phantom),
 	}
@@ -379,4 +379,172 @@ func TestRegisterBidirectional(t *testing.T) {
 	if net.IP(respIpv6).String() != fakeV6Phantom {
 		t.Fatal("response ip incorrect")
 	}
+}
+
+func TestRegProcessBdReq(t *testing.T) {
+
+	r := &RegProcessor{
+		zmqMutex:      sync.Mutex{},
+		selectorMutex: sync.RWMutex{},
+		authenticated: false,
+		ipSelector:    &mockIPSelector{},
+		regOverrides:  nil,
+	}
+
+	err := r.AddTransport(pb.TransportType_Prefix, prefix.DefaultSet())
+	require.Nil(t, err)
+
+	tspt := pb.TransportType_Prefix
+	trueptr := true
+	id := int32(prefix.Min)
+	params, err := anypb.New(&pb.PrefixTransportParams{
+		PrefixId:         &id,
+		RandomizeDstPort: &trueptr,
+	})
+	require.Nil(t, err)
+
+	clv := uint32(4)
+	c2sw := &pb.C2SWrapper{
+		RegistrationPayload: &pb.ClientToStation{
+			ClientLibVersion: &clv,
+			Transport:        &tspt,
+			V6Support:        &trueptr,
+			V4Support:        &trueptr,
+			TransportParams:  params,
+		},
+		SharedSecret: make([]byte, 32),
+	}
+
+	resp, err := r.processBdReq(c2sw)
+	require.Nil(t, err)
+	require.NotNil(t, resp)
+}
+
+type mockIPSelector struct{}
+
+func (*mockIPSelector) Select([]byte, uint, uint, bool) (net.IP, error) {
+	return net.ParseIP("8.8.8.8"), nil
+}
+
+func TestRegProcessBdReqOverride(t *testing.T) {
+	clv := uint32(4)
+	tspt := pb.TransportType_Prefix
+	trueptr := true
+	falseptr := false
+	id := int32(prefix.Min)
+
+	r := &RegProcessor{
+		zmqMutex:      sync.Mutex{},
+		selectorMutex: sync.RWMutex{},
+		authenticated: false,
+		ipSelector:    &mockIPSelector{},
+		regOverrides:  interfaces.Overrides([]interfaces.RegOverride{overrides.NewRandPrefixOverride()}),
+	}
+
+	err := r.AddTransport(pb.TransportType_Prefix, prefix.DefaultSet())
+	require.Nil(t, err)
+
+	params, err := anypb.New(&pb.PrefixTransportParams{
+		PrefixId:         &id,
+		RandomizeDstPort: &trueptr,
+	})
+	require.Nil(t, err)
+
+	c2sw := &pb.C2SWrapper{
+		RegistrationPayload: &pb.ClientToStation{
+			ClientLibVersion:          &clv,
+			Transport:                 &tspt,
+			V6Support:                 &trueptr,
+			V4Support:                 &trueptr,
+			TransportParams:           params,
+			DisableRegistrarOverrides: &falseptr,
+		},
+		SharedSecret: make([]byte, 32),
+	}
+
+	resp, err := r.processBdReq(c2sw)
+	require.Nil(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, resp, c2sw.GetRegistrationResponse())
+
+	// ----
+
+	// ensure that the expected prefix (the one provided) is returned if DisableRegistrarOverrides
+	// is set.
+
+	params, err = anypb.New(&pb.PrefixTransportParams{
+		PrefixId:         &id,
+		RandomizeDstPort: &falseptr,
+	})
+	require.Nil(t, err)
+
+	c2sw = &pb.C2SWrapper{
+		RegistrationPayload: &pb.ClientToStation{
+			ClientLibVersion:          &clv,
+			Transport:                 &tspt,
+			V6Support:                 &trueptr,
+			V4Support:                 &trueptr,
+			TransportParams:           params,
+			DisableRegistrarOverrides: &trueptr,
+		},
+		SharedSecret: make([]byte, 32),
+	}
+
+	resp, err = r.processBdReq(c2sw)
+	require.Nil(t, err)
+	require.Nil(t, resp.GetTransportParams())
+
+	// ----
+	// // ensure that a returned override prefix does not have to be in the Default Prefix set.
+
+	params, err = anypb.New(&pb.PrefixTransportParams{
+		PrefixId:         &id,
+		RandomizeDstPort: &falseptr,
+	})
+	require.Nil(t, err)
+
+	c2sw = &pb.C2SWrapper{
+		RegistrationPayload: &pb.ClientToStation{
+			ClientLibVersion:          &clv,
+			Transport:                 &tspt,
+			V6Support:                 &trueptr,
+			V4Support:                 &trueptr,
+			TransportParams:           params,
+			DisableRegistrarOverrides: &falseptr,
+		},
+		SharedSecret: make([]byte, 32),
+	}
+
+	fixedPrefix := &mockPrefix{[]byte("aaaa"), -2}
+	r.regOverrides = interfaces.Overrides([]interfaces.RegOverride{overrides.NewFixedPrefixOverride(fixedPrefix)})
+
+	resp, err = r.processBdReq(c2sw)
+	require.Nil(t, err)
+	require.NotNil(t, resp.GetTransportParams())
+
+	var m = &pb.PrefixTransportParams{}
+	require.Nil(t, transports.UnmarshalAnypbTo(resp.GetTransportParams(), m))
+	require.Equal(t, int32(-2), m.GetPrefixId())
+	require.Equal(t, []byte("aaaa"), m.GetPrefix())
+}
+
+type mockPrefix struct {
+	b  []byte
+	id int32
+}
+
+func (mp *mockPrefix) Bytes() []byte {
+	return mp.b
+}
+
+func (mp *mockPrefix) ID() prefix.PrefixID {
+	return prefix.PrefixID(mp.id)
+}
+
+func (mp *mockPrefix) DstPort([]byte) uint16 {
+	return 1024
+}
+
+func (mp *mockPrefix) FlushAfterPrefix() bool {
+	return true
 }
